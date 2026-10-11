@@ -2666,7 +2666,7 @@ func (app *App) runCompletionWithHooks(ctx context.Context, req StandardRequest,
 		return nil
 	}
 	// FIXME 这里通过eamil获取对应的browsercontext
-	err = app.client.StreamChat(ctx, acc.Email, chatID, payload, func(evt UpstreamEvent) error {
+	err = app.client.StreamChat(ctx, acc, chatID, payload, req.Prompt, func(evt UpstreamEvent) error {
 		result.Events = append(result.Events, evt)
 		if evt.Type != "delta" || evt.Content == "" {
 			return nil
@@ -4097,7 +4097,7 @@ func (app *App) runToolMarkupRecoveryAttempt(ctx context.Context, acc *Account, 
 	if req.ToolEnabled {
 		sieve = toolcall.NewToolSieve(req.Tools)
 	}
-	err = app.client.StreamChat(ctx, acc.Token, chatID, payload, func(evt UpstreamEvent) error {
+	err = app.client.StreamChat(ctx, acc, chatID, payload, "", func(evt UpstreamEvent) error {
 		result.Events = append(result.Events, evt)
 		if evt.Type != "delta" || evt.Content == "" {
 			return nil
@@ -5793,7 +5793,7 @@ func (app *App) createImageURLs(ctx context.Context, model, promptText string, i
 
 			payload := buildChatPayload(chatID, model, promptText, false, nil, "image_gen", imageOptions, nil, false)
 			parts := []string{}
-			if err := app.client.StreamChat(ctx, acc.Token, chatID, payload, func(evt UpstreamEvent) error {
+			if err := app.client.StreamChat(ctx, acc, chatID, payload, "", func(evt UpstreamEvent) error {
 				if evt.Content != "" {
 					parts = append(parts, evt.Content)
 				}
@@ -8284,12 +8284,12 @@ func (c *QwenClient) DeleteChat(ctx context.Context, token, chatID string) bool 
 	return false
 }
 
-func (q *QwenClient) StreamChat(ctx context.Context, token, chatID string, payload map[string]any, onEvent func(UpstreamEvent) error) error {
+func (q *QwenClient) StreamChat(ctx context.Context, acc *Account, chatID string, payload map[string]any, prompt string, onEvent func(UpstreamEvent) error) error {
 	// 启动页面 读取已有的cookie和token
 	// if q.browserContext == nil {
 	// 	return fmt.Errorf("未能成功初始化浏览器")
 	// }
-	browserContext, err := q.browserManager.NewContextByAccount(token)
+	browserContext, err := q.browserManager.NewContextByAccount(acc.Email)
 	if err != nil {
 		return err
 	}
@@ -8298,6 +8298,28 @@ func (q *QwenClient) StreamChat(ctx context.Context, token, chatID string, paylo
 		return err
 	}
 	defer page.Close()
+	defer func(browserContext playwright.BrowserContext) {
+		// 结束之后 重新保存一下cookie
+		if state, err := browserContext.StorageState(playwright.BrowserContextStorageStateOptions{
+			Path: playwright.String(q.settings.DataDir + utils.GetEmailHashFilename(acc.Email)),
+		}); err != nil {
+
+		} else {
+			for _, cookie := range state.Cookies {
+				if cookie.Name == "token" { // 注意：请确认你的 token 字段名是不是叫 "token"，有时可能是 "access_token" 或 "Authorization"
+					acc.Token = cookie.Value
+				}
+			}
+			// 2. 如果 Cookies 中没有，从 LocalStorage (Origins) 中查找
+			for _, origin := range state.Origins {
+				for _, item := range origin.LocalStorage {
+					if item.Name == "token" {
+						acc.Token = item.Value
+					}
+				}
+			}
+		}
+	}(browserContext)
 
 	// 1. 创建 channel 用于接收 Console 传递过来的流数据
 	consoleChan := make(chan string, 10)
@@ -8335,17 +8357,19 @@ func (q *QwenClient) StreamChat(ctx context.Context, token, chatID string, paylo
 	}
 	inputBox := page.GetByPlaceholder("询问 Qwen")
 	q.logger.Info("payload", "payload", payload)
-	err = inputBox.Fill("你好，给我讲个笑话") // FIXME 没有将实际的prompt传递过来
+	err = inputBox.Fill(prompt) // FIXME 没有将实际的prompt传递过来
 	if err != nil {
 		// TODO 换第二种办法写入
 		return fmt.Errorf("填充输入框失败：%v", err)
 	}
 	time.Sleep(2000)
-	err = inputBox.Press("Enter")
-	if err != nil {
-		// TODO 换第二种办法尝试直接发送
-		return fmt.Errorf("发送消息失败：%v", err)
-	}
+	msgSendBtn := page.GetByRole(*playwright.AriaRoleButton, playwright.PageGetByRoleOptions{
+		Name:  "发送",
+		Exact: playwright.Bool(true),
+	}).Or(page.GetByLabel("发送", playwright.PageGetByLabelOptions{
+		Exact: playwright.Bool(true),
+	}))
+	SafeClick(msgSendBtn, 30000.0)
 
 	// ================== 处理得到的流数据 ===============
 	// 4. 核心流处理循环 (模仿 StreamChat 的 select 结构)
