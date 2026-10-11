@@ -8293,11 +8293,18 @@ func (q *QwenClient) StreamChat(ctx context.Context, acc *Account, chatID string
 	if err != nil {
 		return err
 	}
-	page, err := browserContext.NewPage()
-	if err != nil {
-		return err
+	var page playwright.Page
+	pages := browserContext.Pages()
+	if len(pages) < 1 {
+		page, err = browserContext.NewPage()
+		if err != nil {
+			return err
+		}
+	} else {
+		page = pages[0]
 	}
-	defer page.Close()
+
+	// defer page.Close() // 不关闭页面
 	defer func(browserContext playwright.BrowserContext) {
 		// 结束之后 重新保存一下cookie
 		if state, err := browserContext.StorageState(playwright.BrowserContextStorageStateOptions{
@@ -8338,11 +8345,14 @@ func (q *QwenClient) StreamChat(ctx context.Context, acc *Account, chatID string
 			}
 		}
 	})
-
-	if _, err = page.Goto("https://chat.qwen.ai", playwright.PageGotoOptions{
-		WaitUntil: playwright.WaitUntilStateNetworkidle,
-	}); err != nil {
-		return fmt.Errorf("打开页面失败：%v", err)
+	if len(pages) < 1 {
+		if _, err = page.Goto("https://chat.qwen.ai", playwright.PageGotoOptions{
+			WaitUntil: playwright.WaitUntilStateNetworkidle,
+		}); err != nil {
+			return fmt.Errorf("打开页面失败：%v", err)
+		}
+	} else {
+		q.logger.Info("复用已存在页面")
 	}
 
 	// 使用token直接登陆，使用头像检测是否成功登陆

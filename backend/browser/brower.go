@@ -60,7 +60,7 @@ func NewBrowserManager(dataDir string, logger *slog.Logger) (*BrowserManager, er
 	}
 
 	browser, err := pw.Firefox.Launch(playwright.BrowserTypeLaunchOptions{
-		Headless: playwright.Bool(false),
+		Headless: playwright.Bool(true),
 	})
 	if err != nil {
 		pw.Stop() // 连接失败时记得关掉
