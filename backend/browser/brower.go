@@ -2,14 +2,19 @@ package browser
 
 import (
 	"fmt"
+	"log/slog"
+	"qwen2api-go/utils"
 
 	"github.com/mxschmitt/playwright-go"
 )
 
 type BrowserManager struct {
-	pw      *playwright.Playwright
-	browser playwright.Browser
-	context playwright.BrowserContext
+	dataDir  string
+	logger   *slog.Logger
+	pw       *playwright.Playwright
+	browser  playwright.Browser
+	context  playwright.BrowserContext
+	contexts map[string]playwright.BrowserContext
 }
 
 const initScript = `
@@ -48,13 +53,12 @@ const initScript = `
 	`
 
 // 初始化
-func NewBrowserManager() (*BrowserManager, error) {
+func NewBrowserManager(dataDir string, logger *slog.Logger) (*BrowserManager, error) {
 	pw, err := playwright.Run()
 	if err != nil {
 		return nil, fmt.Errorf("启动 Playwright 失败: %w", err)
 	}
 
-	// browser, err := pw.Firefox.Connect(endpoint)
 	browser, err := pw.Firefox.Launch(playwright.BrowserTypeLaunchOptions{
 		Headless: playwright.Bool(false),
 	})
@@ -62,9 +66,41 @@ func NewBrowserManager() (*BrowserManager, error) {
 		pw.Stop() // 连接失败时记得关掉
 		return nil, fmt.Errorf("连接 Camoufox 失败: %w", err)
 	}
+
 	context, err := browser.NewContext(playwright.BrowserNewContextOptions{
+		Locale: playwright.String("zh-CN"),
+		// StorageStatePath: playwright.String("auth.json"),
+	})
+	if err != nil {
+		// TODO 这里根据需要决定要不要关 browser / pw
+		return nil, fmt.Errorf("创建 Context 失败: %w", err)
+	}
+
+	return &BrowserManager{
+		dataDir:  dataDir,
+		logger:   logger,
+		pw:       pw,
+		browser:  browser,
+		context:  context,
+		contexts: make(map[string]playwright.BrowserContext),
+	}, nil
+}
+
+// 获取 Context 供外部登陆使用
+func (m *BrowserManager) GetLoginContext() playwright.BrowserContext {
+	return m.context
+}
+
+func (m *BrowserManager) NewContextByAccount(email string) (playwright.BrowserContext, error) {
+	if ctx, ok := m.contexts[email]; ok {
+		return ctx, nil
+	}
+	// 根据账号直接定位对应的auth文件
+	authFilePath := m.dataDir + utils.GetEmailHashFilename(email)
+	m.logger.Info("authFilePath", authFilePath)
+	context, err := m.browser.NewContext(playwright.BrowserNewContextOptions{
 		Locale:           playwright.String("zh-CN"),
-		StorageStatePath: playwright.String("auth.json"),
+		StorageStatePath: playwright.String(authFilePath),
 	})
 	if err != nil {
 		// 这里根据需要决定要不要关 browser / pw
@@ -74,17 +110,8 @@ func NewBrowserManager() (*BrowserManager, error) {
 	if err := context.AddInitScript(playwright.Script{Content: playwright.String(initScript)}); err != nil {
 		return nil, fmt.Errorf("注入 InitScript 失败: %v", err)
 	}
-
-	return &BrowserManager{
-		pw:      pw,
-		browser: browser,
-		context: context,
-	}, nil
-}
-
-// 获取 Context 供外部使用
-func (m *BrowserManager) Context() playwright.BrowserContext {
-	return m.context
+	m.contexts[email] = context
+	return context, nil
 }
 
 // 程序结束时调用，统一清理
@@ -99,6 +126,11 @@ func (m *BrowserManager) Close() error {
 	// if m.browser != nil {
 	// 	_ = m.browser.Close()
 	// }
+	for _, ctx := range m.contexts {
+		if ctx != nil {
+			_ = ctx.Close()
+		}
+	}
 
 	if m.pw != nil {
 		return m.pw.Stop()

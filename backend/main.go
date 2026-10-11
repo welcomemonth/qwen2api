@@ -167,16 +167,16 @@ func NewApp(settings Settings, logger *slog.Logger) (*App, error) {
 	if err := app.accounts.Load(); err != nil {
 		return nil, err
 	}
-	browser, err := browser.NewBrowserManager()
+	browser, err := browser.NewBrowserManager(app.settings.DataDir, logger)
 	if err != nil {
 		return nil, err
 	}
-	app.browser = browser // TODO 没有关闭这个内容
+	// app.browser = browser // TODO 没有关闭这个内容
 	// 初始化客户端
 
 	// ======================
 
-	app.client = NewQwenClient(app.accounts, settings, app.browser.Context(), logger)
+	app.client = NewQwenClient(app.accounts, settings, browser, logger)
 	app.chatPool = NewChatIDPool(app.client, app.accounts, settings, logger)
 	app.keepalive = NewKeepAliveService(logger)
 	return app, nil
@@ -2665,7 +2665,8 @@ func (app *App) runCompletionWithHooks(ctx context.Context, req StandardRequest,
 		}
 		return nil
 	}
-	err = app.client.StreamChat(ctx, acc.Token, chatID, payload, func(evt UpstreamEvent) error {
+	// FIXME 这里通过eamil获取对应的browsercontext
+	err = app.client.StreamChat(ctx, acc.Email, chatID, payload, func(evt UpstreamEvent) error {
 		result.Events = append(result.Events, evt)
 		if evt.Type != "delta" || evt.Content == "" {
 			return nil
@@ -6412,8 +6413,9 @@ func (q *QwenClient) VerifyAccountWithPwd(ctx context.Context, account *Account)
 	var result = &TokenVerifyResult{
 		Valid: false,
 	}
+	browserContext := q.browserManager.GetLoginContext()
 	// ============= 打开新页面 ==============
-	page, err := q.browserContext.NewPage()
+	page, err := browserContext.NewPage()
 	if err != nil {
 		result.Error = err.Error()
 		result.StatusCode = ""
@@ -6463,9 +6465,8 @@ func (q *QwenClient) VerifyAccountWithPwd(ctx context.Context, account *Account)
 	}
 
 	// ========== 保存完整登录状态 ==========
-	if state, err := q.browserContext.StorageState(playwright.BrowserContextStorageStateOptions{
-		Path: playwright.String("./auth.json"),
-		//q.settings.DataDir + utils.GetEmailHashFilename(account.Email)
+	if state, err := browserContext.StorageState(playwright.BrowserContextStorageStateOptions{
+		Path: playwright.String(q.settings.DataDir + utils.GetEmailHashFilename(account.Email)),
 	}); err != nil {
 		result.Error = err.Error()
 		result.StatusCode = ""
@@ -8084,7 +8085,7 @@ type QwenClient struct {
 	logger         *slog.Logger
 	http           *http.Client
 	mu             sync.Mutex
-	browserContext playwright.BrowserContext
+	browserManager *browser.BrowserManager
 	deleted        map[string]bool
 }
 
@@ -8132,9 +8133,9 @@ type TokenVerifyResult struct {
 	Error      string
 }
 
-func NewQwenClient(pool *AccountPool, settings Settings, browserCtx playwright.BrowserContext, logger *slog.Logger) *QwenClient {
+func NewQwenClient(pool *AccountPool, settings Settings, browser *browser.BrowserManager, logger *slog.Logger) *QwenClient {
 	return &QwenClient{
-		pool: pool, settings: settings, logger: logger, browserContext: browserCtx,
+		pool: pool, settings: settings, logger: logger, browserManager: browser,
 		http: &http.Client{
 			Transport: &http.Transport{
 				Proxy: http.ProxyFromEnvironment, MaxIdleConns: 100, MaxIdleConnsPerHost: 20,
@@ -8283,12 +8284,16 @@ func (c *QwenClient) DeleteChat(ctx context.Context, token, chatID string) bool 
 	return false
 }
 
-func (c *QwenClient) StreamChat(ctx context.Context, token, chatID string, payload map[string]any, onEvent func(UpstreamEvent) error) error {
+func (q *QwenClient) StreamChat(ctx context.Context, token, chatID string, payload map[string]any, onEvent func(UpstreamEvent) error) error {
 	// 启动页面 读取已有的cookie和token
-	if c.browserContext == nil {
-		return fmt.Errorf("未能成功初始化浏览器")
+	// if q.browserContext == nil {
+	// 	return fmt.Errorf("未能成功初始化浏览器")
+	// }
+	browserContext, err := q.browserManager.NewContextByAccount(token)
+	if err != nil {
+		return err
 	}
-	page, err := c.browserContext.NewPage()
+	page, err := browserContext.NewPage()
 	if err != nil {
 		return err
 	}
@@ -8313,7 +8318,7 @@ func (c *QwenClient) StreamChat(ctx context.Context, token, chatID string, paylo
 	})
 
 	if _, err = page.Goto("https://chat.qwen.ai", playwright.PageGotoOptions{
-		WaitUntil: playwright.WaitUntilStateDomcontentloaded,
+		WaitUntil: playwright.WaitUntilStateNetworkidle,
 	}); err != nil {
 		return fmt.Errorf("打开页面失败：%v", err)
 	}
@@ -8326,9 +8331,10 @@ func (c *QwenClient) StreamChat(ctx context.Context, token, chatID string, paylo
 		Timeout: &timeout,
 	})
 	if err != nil {
-		return fmt.Errorf("获取用户头像组件失败：%v \n", err)
+		return fmt.Errorf("登陆失败：%v \n", err)
 	}
 	inputBox := page.GetByPlaceholder("询问 Qwen")
+	q.logger.Info("payload", "payload", payload)
 	err = inputBox.Fill("你好，给我讲个笑话") // FIXME 没有将实际的prompt传递过来
 	if err != nil {
 		// TODO 换第二种办法写入
@@ -8379,7 +8385,7 @@ func (c *QwenClient) StreamChat(ctx context.Context, token, chatID string, paylo
 				// 4. 解析并触发回调
 				// 注意：这里直接传入 block，如果你的 parseSSEBlock 严格要求末尾有换行，
 				// 可以改成 block + "\n\n"，但通常标准的按行解析器不需要。
-				if err := c.parseAndTrigger(block, wrappedOnEvent, &events); err != nil {
+				if err := q.parseAndTrigger(block, wrappedOnEvent, &events); err != nil {
 					return err
 				}
 				// 【新增】每次解析完一个块后，检查是否触发了 finished
