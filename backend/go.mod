@@ -4,6 +4,7 @@ go 1.26
 
 require (
 	github.com/aliyun/aliyun-oss-go-sdk v3.0.2+incompatible
+	github.com/mxschmitt/playwright-go v0.6201.1
 	github.com/playwright-community/playwright-go v0.5700.1
 )
 

@@ -3,7 +3,7 @@ package browser
 import (
 	"fmt"
 
-	"github.com/playwright-community/playwright-go"
+	"github.com/mxschmitt/playwright-go"
 )
 
 type BrowserManager struct {
@@ -13,7 +13,6 @@ type BrowserManager struct {
 }
 
 const initScript = `
-		// console.log("[QWEN-SSE-CHUNK] 开始");
 		const originalFetch = window.fetch;
 		window.fetch = async function(...args) {
 			// console.log("[QWEN-SSE-CHUNK] 检查到内容");
@@ -44,13 +43,12 @@ const initScript = `
 					}
 				})();
 			}
-			
 			return response;
 		};
 	`
 
 // 初始化
-func NewBrowserManager(endpoint string) (*BrowserManager, error) {
+func NewBrowserManager() (*BrowserManager, error) {
 	pw, err := playwright.Run()
 	if err != nil {
 		return nil, fmt.Errorf("启动 Playwright 失败: %w", err)

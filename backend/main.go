@@ -34,14 +34,10 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/playwright-community/playwright-go"
-	pw "github.com/playwright-community/playwright-go"
+	"github.com/mxschmitt/playwright-go"
 
 	"qwen2api-go/adapter"
-	apidesc "qwen2api-go/api"
 	"qwen2api-go/browser"
-	"qwen2api-go/core"
-	rt "qwen2api-go/runtime"
 	"qwen2api-go/services"
 	"qwen2api-go/toolcall"
 	"qwen2api-go/upstream"
@@ -77,7 +73,7 @@ func main() {
 	if strings.TrimSpace(settings.AdminKey) == "" {
 		logger.Warn("ADMIN_KEY is not set; configure it before using WebUI or admin APIs")
 	}
-	runMigratedPackageSelfCheck(logger)
+	// runMigratedPackageSelfCheck(logger)
 	if len(os.Args) > 1 && os.Args[1] == "--install-browsers" {
 		if err := installPlaywrightBrowsers(logger); err != nil {
 			logger.Error("failed to install Playwright browsers", "error", err)
@@ -171,7 +167,7 @@ func NewApp(settings Settings, logger *slog.Logger) (*App, error) {
 	if err := app.accounts.Load(); err != nil {
 		return nil, err
 	}
-	browser, err := browser.NewBrowserManager("ws://localhost:9222/camoufox")
+	browser, err := browser.NewBrowserManager()
 	if err != nil {
 		return nil, err
 	}
@@ -236,31 +232,31 @@ func repoRootFromCwd() string {
 	return cleaned
 }
 
-func runMigratedPackageSelfCheck(logger *slog.Logger) {
-	routes := 0
-	routes += len(apidesc.ProbeRoutes())
-	routes += len(apidesc.AdminRoutes())
-	routes += len(apidesc.ModelRoutes())
-	routes += len(apidesc.ChatRoutes())
-	routes += len(apidesc.ResponsesRoutes())
-	routes += len(apidesc.AnthropicRoutes())
-	routes += len(apidesc.GeminiRoutes())
-	routes += len(apidesc.ImageRoutes())
-	routes += len(apidesc.VideoRoutes())
-	routes += len(apidesc.FileRoutes())
-	routes += len(apidesc.EmbeddingRoutes())
+// func runMigratedPackageSelfCheck(logger *slog.Logger) {
+// 	routes := 0
+// 	routes += len(apidesc.ProbeRoutes())
+// 	routes += len(apidesc.AdminRoutes())
+// 	routes += len(apidesc.ModelRoutes())
+// 	routes += len(apidesc.ChatRoutes())
+// 	routes += len(apidesc.ResponsesRoutes())
+// 	routes += len(apidesc.AnthropicRoutes())
+// 	routes += len(apidesc.GeminiRoutes())
+// 	routes += len(apidesc.ImageRoutes())
+// 	routes += len(apidesc.VideoRoutes())
+// 	routes += len(apidesc.FileRoutes())
+// 	routes += len(apidesc.EmbeddingRoutes())
 
-	coreChecks := []any{
-		core.Version,
-		core.RedactToken("abcdefghijklmnopqrstuvwxyz"),
-		core.ChooseEngine(false, true),
-		core.DefaultBrowserOptions(core.LoadSettings(repoRootFromCwd())).PoolSize,
-		rt.VisibleText("visible<think>hidden</think>"),
-	}
-	if logger != nil {
-		logger.Debug("migrated Go package self-check", "routes", routes, "core_checks", len(coreChecks))
-	}
-}
+// 	coreChecks := []any{
+// 		core.Version,
+// 		core.RedactToken("abcdefghijklmnopqrstuvwxyz"),
+// 		core.ChooseEngine(false, true),
+// 		core.DefaultBrowserOptions(core.LoadSettings(repoRootFromCwd())).PoolSize,
+// 		rt.VisibleText("visible<think>hidden</think>"),
+// 	}
+// 	if logger != nil {
+// 		logger.Debug("migrated Go package self-check", "routes", routes, "core_checks", len(coreChecks))
+// 	}
+// }
 
 // ---- migrated from accounts.go ----
 type Account struct {
@@ -927,7 +923,7 @@ func installPlaywrightBrowsers(logger *slog.Logger) error {
 	if logger != nil {
 		logger.Info("installing Playwright browser runtime", "browser", "chromium")
 	}
-	err := pw.Install(&pw.RunOptions{
+	err := playwright.Install(&playwright.RunOptions{
 		Browsers: []string{"chromium"},
 		Stdout:   io.Discard,
 		Stderr:   io.Discard,
@@ -1157,7 +1153,7 @@ func (app *App) activateQwenAccount(ctx context.Context, acc Account) (Account, 
 	if app.logger != nil {
 		app.logger.Info("账号激活邮件轮询完成", "account", acc.Email, "link_found", verifyLink != "")
 	}
-	err := app.withBrowser(ctx, func(page pw.Page) error {
+	err := app.withBrowser(ctx, func(page playwright.Page) error {
 		if verifyLink == "" {
 			if app.logger != nil {
 				app.logger.Info("账号激活尝试从邮箱页面查找链接", "account", acc.Email)
@@ -1173,7 +1169,7 @@ func (app *App) activateQwenAccount(ctx context.Context, acc Account) (Account, 
 		if app.logger != nil {
 			app.logger.Info("账号激活开始访问验证链接", "account", acc.Email)
 		}
-		if _, err := page.Goto(verifyLink, pw.PageGotoOptions{WaitUntil: pw.WaitUntilStateDomcontentloaded, Timeout: pw.Float(30000)}); err != nil {
+		if _, err := page.Goto(verifyLink, playwright.PageGotoOptions{WaitUntil: playwright.WaitUntilStateDomcontentloaded, Timeout: playwright.Float(30000)}); err != nil {
 			app.logger.Warn("activation link load failed", "error", err)
 		}
 		sleepWithContext(ctx, 5*time.Second)
@@ -1224,19 +1220,19 @@ func (app *App) activateQwenAccount(ctx context.Context, acc Account) (Account, 
 	return acc, true, nil
 }
 
-func (app *App) withBrowser(ctx context.Context, fn func(page pw.Page) error) error {
+func (app *App) withBrowser(ctx context.Context, fn func(page playwright.Page) error) error {
 	if err := installPlaywrightBrowsers(app.logger); err != nil {
 		return fmt.Errorf("playwright install failed: %w", err)
 	}
-	runner, err := pw.Run(&pw.RunOptions{SkipInstallBrowsers: true})
+	runner, err := playwright.Run(&playwright.RunOptions{SkipInstallBrowsers: true})
 	if err != nil {
 		return fmt.Errorf("playwright run failed: %w", err)
 	}
 	defer runner.Stop()
 
-	browser, err := runner.Chromium.Launch(pw.BrowserTypeLaunchOptions{
-		Headless: pw.Bool(true),
-		Timeout:  pw.Float(60000),
+	browser, err := runner.Chromium.Launch(playwright.BrowserTypeLaunchOptions{
+		Headless: playwright.Bool(true),
+		Timeout:  playwright.Float(60000),
 		Args: []string{
 			"--disable-dev-shm-usage",
 			"--disable-blink-features=AutomationControlled",
@@ -1248,10 +1244,10 @@ func (app *App) withBrowser(ctx context.Context, fn func(page pw.Page) error) er
 	}
 	defer browser.Close()
 
-	context, err := browser.NewContext(pw.BrowserNewContextOptions{
-		UserAgent: pw.String("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36 Edg/145.0.0.0"),
-		Locale:    pw.String("zh-CN"),
-		Viewport:  &pw.Size{Width: 1365, Height: 768},
+	context, err := browser.NewContext(playwright.BrowserNewContextOptions{
+		UserAgent: playwright.String("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36 Edg/145.0.0.0"),
+		Locale:    playwright.String("zh-CN"),
+		Viewport:  &playwright.Size{Width: 1365, Height: 768},
 		ExtraHttpHeaders: map[string]string{
 			"Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
 		},
@@ -1273,8 +1269,8 @@ func (app *App) withBrowser(ctx context.Context, fn func(page pw.Page) error) er
 	return fn(page)
 }
 
-func loginAndGetToken(ctx context.Context, page pw.Page, email, password string, timeout time.Duration) string {
-	_, _ = page.Goto(qwenBaseURL+"/auth", pw.PageGotoOptions{WaitUntil: pw.WaitUntilStateDomcontentloaded, Timeout: pw.Float(30000)})
+func loginAndGetToken(ctx context.Context, page playwright.Page, email, password string, timeout time.Duration) string {
+	_, _ = page.Goto(qwenBaseURL+"/auth", playwright.PageGotoOptions{WaitUntil: playwright.WaitUntilStateDomcontentloaded, Timeout: playwright.Float(30000)})
 	sleepWithContext(ctx, 2*time.Second)
 	if !fillFirst(page, []string{`input[placeholder*="Email"]`, `input[type="email"]`}, email, 10000) {
 		_ = fillNthInput(page, 0, email)
@@ -1298,28 +1294,28 @@ func loginAndGetToken(ctx context.Context, page pw.Page, email, password string,
 	return ""
 }
 
-func fillFirst(page pw.Page, selectors []string, value string, timeoutMS float64) bool {
+func fillFirst(page playwright.Page, selectors []string, value string, timeoutMS float64) bool {
 	for _, selector := range selectors {
-		if _, err := page.WaitForSelector(selector, pw.PageWaitForSelectorOptions{Timeout: pw.Float(timeoutMS)}); err != nil {
+		if _, err := page.WaitForSelector(selector, playwright.PageWaitForSelectorOptions{Timeout: playwright.Float(timeoutMS)}); err != nil {
 			continue
 		}
-		if err := page.Fill(selector, value, pw.PageFillOptions{Timeout: pw.Float(5000)}); err == nil {
+		if err := page.Fill(selector, value, playwright.PageFillOptions{Timeout: playwright.Float(5000)}); err == nil {
 			return true
 		}
 	}
 	return false
 }
 
-func clickFirst(page pw.Page, selectors []string, timeoutMS float64) bool {
+func clickFirst(page playwright.Page, selectors []string, timeoutMS float64) bool {
 	for _, selector := range selectors {
-		if err := page.Click(selector, pw.PageClickOptions{Timeout: pw.Float(timeoutMS), Force: pw.Bool(true)}); err == nil {
+		if err := page.Click(selector, playwright.PageClickOptions{Timeout: playwright.Float(timeoutMS), Force: playwright.Bool(true)}); err == nil {
 			return true
 		}
 	}
 	return false
 }
 
-func fillNthInput(page pw.Page, index int, value string) error {
+func fillNthInput(page playwright.Page, index int, value string) error {
 	_, err := page.Evaluate(`([index, value]) => {
 		const inputs = Array.from(document.querySelectorAll('input'));
 		const el = inputs[index];
@@ -1333,7 +1329,7 @@ func fillNthInput(page pw.Page, index int, value string) error {
 	return err
 }
 
-func fillPasswordInput(page pw.Page, index int, value string) error {
+func fillPasswordInput(page playwright.Page, index int, value string) error {
 	_, err := page.Evaluate(`([index, value]) => {
 		const inputs = Array.from(document.querySelectorAll('input[type="password"]'));
 		const el = inputs[index];
@@ -1347,7 +1343,7 @@ func fillPasswordInput(page pw.Page, index int, value string) error {
 	return err
 }
 
-func localStorageToken(page pw.Page) string {
+func localStorageToken(page playwright.Page) string {
 	raw, err := page.Evaluate(`() => localStorage.getItem('token')`)
 	if err != nil {
 		return ""
@@ -1355,7 +1351,7 @@ func localStorageToken(page pw.Page) string {
 	return strings.TrimSpace(anyString(raw, ""))
 }
 
-func qwenCookieString(page pw.Page) string {
+func qwenCookieString(page playwright.Page) string {
 	cookies, err := page.Context().Cookies(qwenBaseURL)
 	if err != nil {
 		return ""
@@ -1369,8 +1365,8 @@ func qwenCookieString(page pw.Page) string {
 	return strings.Join(parts, "; ")
 }
 
-func findVerifyLinkViaMailPage(ctx context.Context, page pw.Page, email string) string {
-	_, _ = page.Goto(mailBaseURL+"/"+strings.TrimSpace(email), pw.PageGotoOptions{WaitUntil: pw.WaitUntilStateDomcontentloaded, Timeout: pw.Float(30000)})
+func findVerifyLinkViaMailPage(ctx context.Context, page playwright.Page, email string) string {
+	_, _ = page.Goto(mailBaseURL+"/"+strings.TrimSpace(email), playwright.PageGotoOptions{WaitUntil: playwright.WaitUntilStateDomcontentloaded, Timeout: playwright.Float(30000)})
 	sleepWithContext(ctx, 6*time.Second)
 	_, _ = page.Evaluate(`() => {
 		const modal = document.querySelector('#siteAnnouncementModal');
@@ -1398,7 +1394,7 @@ func findVerifyLinkViaMailPage(ctx context.Context, page pw.Page, email string) 
 	return extractVerifyLinkFromPage(page)
 }
 
-func extractVerifyLinkFromPage(page pw.Page) string {
+func extractVerifyLinkFromPage(page playwright.Page) string {
 	js := `() => {
 		const keywords = ['qwen', 'verify', 'activate', 'confirm', 'aliyun', 'alibaba', 'qwenlm'];
 		const links = Array.from(document.querySelectorAll('a[href]'));
@@ -6392,16 +6388,321 @@ func (app *App) adminAddAccount(w http.ResponseWriter, r *http.Request) {
 		Username:   stringValue(body, "username", ""),
 		StatusCode: "valid",
 	}
-	verify := app.client.VerifyTokenDetail(r.Context(), token)
+	// app.client
+	// verify := app.client.VerifyTokenDetail(r.Context(), token)
+	// if !verify.Valid {
+	// 	utils.WriteJSON(w, http.StatusOK, map[string]any{"ok": false, "error": "Invalid token (验证失败，请确认Token有效)", "status_code": verify.StatusCode, "detail": verify.Error})
+	// 	return
+	// }
+
+	verify := app.client.VerifyAccountWithPwd(r.Context(), &acc)
 	if !verify.Valid {
-		utils.WriteJSON(w, http.StatusOK, map[string]any{"ok": false, "error": "Invalid token (验证失败，请确认Token有效)", "status_code": verify.StatusCode, "detail": verify.Error})
+		utils.WriteJSON(w, http.StatusOK, map[string]any{"ok": false, "error": "Invalid account (账号或密码错误)", "status_code": verify.StatusCode, "detail": verify.Error})
 		return
 	}
+
 	if err := app.accounts.Add(acc); err != nil {
 		utils.WriteError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	utils.WriteJSON(w, http.StatusOK, map[string]any{"ok": true, "email": acc.Email})
+}
+
+func (q *QwenClient) VerifyAccountWithPwd(ctx context.Context, account *Account) *TokenVerifyResult {
+	var result = &TokenVerifyResult{
+		Valid: false,
+	}
+	// ============= 打开新页面 ==============
+	page, err := q.browserContext.NewPage()
+	if err != nil {
+		result.Error = err.Error()
+		result.StatusCode = ""
+		return result
+	}
+	defer page.Close()
+
+	// 1. 先打开首页，让 SPA(Single Page Application) 完整初始化
+	if _, err = page.Goto(qwenBaseURL, playwright.PageGotoOptions{
+		WaitUntil: playwright.WaitUntilStateNetworkidle, // 比 Domcontentloaded 更稳
+		Timeout:   playwright.Float(60000),
+	}); err != nil {
+		result.Error = fmt.Sprintf("打开首页失败: %v", err)
+		return result
+	}
+
+	loginBtn := page.Locator("button[type='submit']").
+		Or(page.GetByRole("button", playwright.PageGetByRoleOptions{Name: "登录", Exact: playwright.Bool(true)}))
+	timeoutMs := 30000.0
+	err = loginBtn.WaitFor(playwright.LocatorWaitForOptions{Timeout: &timeoutMs})
+	if err != nil {
+		result.Error = err.Error()
+		return result
+	}
+
+	SafeClick(loginBtn, timeoutMs)
+
+	// 点击后给 SPA 路由切换时间
+	time.Sleep(1500 * time.Millisecond)
+
+	// ============= 登陆 ===========
+	if err = login(page, account.Email, account.Password); err != nil {
+		result.Error = err.Error()
+		result.StatusCode = ""
+		return result
+	}
+
+	// ============== 等待登陆成功标识 ============
+	userProfilelocator := page.Locator(`img[alt="User profile"]`)
+
+	if err = userProfilelocator.WaitFor(playwright.LocatorWaitForOptions{
+		// Timeout: &timeout, // 不需要传递，默认即30s超时即可
+	}); err != nil {
+		result.Error = err.Error()
+		result.StatusCode = ""
+		return result
+	}
+
+	// ========== 保存完整登录状态 ==========
+	if state, err := q.browserContext.StorageState(playwright.BrowserContextStorageStateOptions{
+		Path: playwright.String("./auth.json"),
+		//q.settings.DataDir + utils.GetEmailHashFilename(account.Email)
+	}); err != nil {
+		result.Error = err.Error()
+		result.StatusCode = ""
+		return result
+	} else {
+		for _, cookie := range state.Cookies {
+			if cookie.Name == "token" { // 注意：请确认你的 token 字段名是不是叫 "token"，有时可能是 "access_token" 或 "Authorization"
+				account.Token = cookie.Value
+			}
+		}
+		// 2. 如果 Cookies 中没有，从 LocalStorage (Origins) 中查找
+		for _, origin := range state.Origins {
+			for _, item := range origin.LocalStorage {
+				if item.Name == "token" {
+					account.Token = item.Value
+				}
+			}
+		}
+	}
+	result.Valid = true
+	return result
+}
+
+func login(page playwright.Page, account, password string) error {
+	if account == "" || password == "" {
+		return fmt.Errorf("账号或密码不能为空")
+	}
+	emailInput := page.Locator("input[name='email']").
+		Or(page.Locator("input[placeholder='输入你的电子邮箱']")).
+		Or(page.Locator("input[placeholder*='电子邮箱']")).
+		Or(page.Locator("input[placeholder*='邮箱']")).
+		Or(page.Locator(".qwenchat-email-otp-panel-email-input input"))
+
+	// 等待输入框出现（每次最多 10 秒，失败刷新，最多重试 3 次）
+	// if err := WaitForButtonWithRefresh(page, emailInput, 10000, 3); err != nil {
+	// 	return fmt.Errorf("等待邮箱输入框出现失败: %w", err)
+	// }
+	timeoutMs := 30000.0
+	if err := emailInput.WaitFor(playwright.LocatorWaitForOptions{
+		Timeout: &timeoutMs,
+	}); err != nil {
+		return err
+	}
+	// 1. 关键存在「使用密码登录」按钮，就先点击切换
+	if err := switchToPasswordLoginIfNeeded(page); err != nil {
+		return err
+	}
+	// 2. 填写邮箱
+
+	if err := SafeFill(emailInput, account, 30000); err != nil {
+		return fmt.Errorf("填写邮箱失败: %w", err)
+	}
+	slog.Info("✓ 邮箱已填写")
+	time.Sleep(800 * time.Millisecond)
+
+	// 3. 填写密码
+	passwordInput := page.Locator("input[name='password']").
+		Or(page.Locator("input[type='password']")).
+		Or(page.Locator(`[data-gtm-form-interact-field-id="1"]`))
+
+	if err := SafeFill(passwordInput, password, 30000); err != nil {
+		return fmt.Errorf("填写密码失败: %w", err)
+	}
+	slog.Info("✓ 密码已填写")
+	time.Sleep(800 * time.Millisecond)
+
+	// 登录按钮（优先按钮，失败再用 Enter）
+	loginBtn := page.Locator("button[type='submit']").
+		Or(page.GetByRole("button", playwright.PageGetByRoleOptions{
+			Name:  "登录",
+			Exact: playwright.Bool(true),
+		})).
+		Or(page.Locator("button:has-text('登录')"))
+
+	if IsInteractable(loginBtn, 30000) {
+		if err := SafeClick(loginBtn, 30000); err != nil {
+			slog.Warn("点击登录按钮失败，尝试回车", "err", err)
+			if err := page.Keyboard().Press("Enter"); err != nil {
+				return fmt.Errorf("回车提交也失败: %w", err)
+			}
+		}
+	} else {
+		// 按钮不可见时直接回车
+		if err := page.Keyboard().Press("Enter"); err != nil {
+			return fmt.Errorf("按下回车键失败: %v", err)
+		}
+	}
+
+	slog.Info("✓ 已触发登录，等待页面响应...")
+	return nil
+}
+
+func IsInteractable(locator playwright.Locator, timeoutMs float64) bool {
+	if timeoutMs <= 0 {
+		timeoutMs = 3000.0
+	}
+	err := locator.WaitFor(playwright.LocatorWaitForOptions{
+		State:   playwright.WaitForSelectorStateVisible,
+		Timeout: &timeoutMs,
+	})
+	if err != nil {
+		return false
+	}
+	// 额外检查 enabled
+	enabled, err := locator.IsEnabled()
+	return err == nil && enabled
+}
+
+// 元素是否存在（不要求可见）
+func Exists(locator playwright.Locator, timeoutMs float64) bool {
+	if timeoutMs <= 0 {
+		timeoutMs = 2000.0
+	}
+	err := locator.WaitFor(playwright.LocatorWaitForOptions{
+		State:   playwright.WaitForSelectorStateAttached,
+		Timeout: &timeoutMs,
+	})
+	return err == nil
+}
+
+// 在填写账号密码之前，先判断并切换到密码登录模式
+func switchToPasswordLoginIfNeeded(page playwright.Page) error {
+	// 定位“使用密码登录”按钮（多重保险）
+	passwordLoginBtn := page.Locator("div.qwenchat-email-otp-panel-return button").
+		Or(page.GetByRole("button", playwright.PageGetByRoleOptions{
+			Name:  "使用密码登录",
+			Exact: playwright.Bool(true),
+		})).
+		Or(page.Locator("button:has-text('使用密码登录')"))
+
+	// 判断按钮是否存在（给 3 秒超时即可）
+	if !Exists(passwordLoginBtn, 3000) {
+		slog.Info("未发现「使用密码登录」按钮，当前已是密码登录模式或页面结构不同")
+		return nil
+	}
+
+	slog.Info("发现「使用密码登录」按钮，准备点击切换...")
+	if err := SafeClick(passwordLoginBtn, 30000); err != nil {
+		return fmt.Errorf("点击「使用密码登录」失败: %w", err)
+	}
+
+	// 点击后给页面一点时间切换表单
+	time.Sleep(800 * time.Millisecond)
+	slog.Info("✓ 已切换到密码登录模式")
+	return nil
+}
+
+func SafeFill(locator playwright.Locator, value string, timeoutMs float64) error {
+	if timeoutMs <= 0 {
+		timeoutMs = 30000.0
+	}
+
+	// 先尝试 Focus（比 Click 更轻量）
+	err := locator.Focus(playwright.LocatorFocusOptions{Timeout: &timeoutMs})
+	if err != nil {
+		// Focus 失败就 Force Click
+		if err2 := SafeClick(locator, timeoutMs); err2 != nil {
+			return fmt.Errorf("聚焦/点击输入框失败: %w", err2)
+		}
+	}
+
+	// 常规 Fill
+	err = locator.Fill(value, playwright.LocatorFillOptions{Timeout: &timeoutMs})
+	if err == nil {
+		return nil
+	}
+	slog.Debug("常规 Fill 失败，使用 JS 注入", "err", err)
+
+	// JS 强制注入 + 触发事件
+	_, err = locator.Evaluate(`(el, val) => {
+		el.focus();
+		el.value = val;
+		el.dispatchEvent(new Event('input',  { bubbles: true }));
+		el.dispatchEvent(new Event('change', { bubbles: true }));
+		// 部分框架还需要这个
+		el.dispatchEvent(new Event('blur',   { bubbles: true }));
+	}`, value)
+	if err != nil {
+		return fmt.Errorf("JS 注入值失败: %w", err)
+	}
+	return nil
+}
+
+// 多重策略：常规 → Force → JS 原生 click + 事件派发
+// 最终失败返回 error
+func SafeClick(locator playwright.Locator, timeoutMs float64) error {
+	if timeoutMs <= 0 {
+		timeoutMs = 30000.0
+	}
+	short := 10000.0
+
+	_, err := locator.Page()
+	if err != nil {
+		return err
+	}
+
+	// 先等待元素出现
+	if err := locator.WaitFor(playwright.LocatorWaitForOptions{
+		// State:   playwright.WaitForSelectorStateVisible,
+		Timeout: &timeoutMs,
+	}); err != nil {
+		return fmt.Errorf("等待元素可见失败: %w", err)
+	}
+	// 策略 1: 常规点击（带 actionability 检查）
+	err = locator.Click(playwright.LocatorClickOptions{
+		Timeout: &short,
+	})
+	if err == nil {
+		return nil
+	}
+	slog.Debug("常规点击失败，尝试 Force", "err", err)
+
+	// 策略 2: Force 强制点击（忽略遮挡）
+	err = locator.Click(playwright.LocatorClickOptions{
+		Force:   playwright.Bool(true),
+		Timeout: &short,
+	})
+	if err == nil {
+		return nil
+	}
+	slog.Debug("Force 点击失败，尝试 JS 兜底", "err", err)
+	// 策略 3: JS 终极兜底
+	_, err = locator.Evaluate(`(el) => {
+		el.scrollIntoView({block: 'center', behavior: 'instant'});
+		el.click();
+		el.dispatchEvent(new MouseEvent('click', {
+			bubbles: true,
+			cancelable: true,
+			view: window
+		}));
+	}`, playwright.LocatorEvaluateOptions{
+		Timeout: &timeoutMs, // 用较长超时
+	})
+	if err != nil {
+		return fmt.Errorf("所有点击策略均失败: %w", err)
+	}
+	return nil
 }
 
 func (app *App) adminVerifyAll(w http.ResponseWriter, r *http.Request) {
@@ -7783,7 +8084,7 @@ type QwenClient struct {
 	logger         *slog.Logger
 	http           *http.Client
 	mu             sync.Mutex
-	browserContext pw.BrowserContext
+	browserContext playwright.BrowserContext
 	deleted        map[string]bool
 }
 
@@ -7831,7 +8132,7 @@ type TokenVerifyResult struct {
 	Error      string
 }
 
-func NewQwenClient(pool *AccountPool, settings Settings, browserCtx pw.BrowserContext, logger *slog.Logger) *QwenClient {
+func NewQwenClient(pool *AccountPool, settings Settings, browserCtx playwright.BrowserContext, logger *slog.Logger) *QwenClient {
 	return &QwenClient{
 		pool: pool, settings: settings, logger: logger, browserContext: browserCtx,
 		http: &http.Client{
@@ -8011,8 +8312,8 @@ func (c *QwenClient) StreamChat(ctx context.Context, token, chatID string, paylo
 		}
 	})
 
-	if _, err = page.Goto("https://chat.qwen.ai", pw.PageGotoOptions{
-		WaitUntil: pw.WaitUntilStateDomcontentloaded,
+	if _, err = page.Goto("https://chat.qwen.ai", playwright.PageGotoOptions{
+		WaitUntil: playwright.WaitUntilStateDomcontentloaded,
 	}); err != nil {
 		return fmt.Errorf("打开页面失败：%v", err)
 	}
@@ -8021,7 +8322,7 @@ func (c *QwenClient) StreamChat(ctx context.Context, token, chatID string, paylo
 	userProfilelocator := page.Locator(`img[alt="User profile"]`)
 	// 等待两分钟，没有出现这个locator或者超过两分钟则标记失败
 	timeout := 120000.0 // 2分钟
-	err = userProfilelocator.WaitFor(pw.LocatorWaitForOptions{
+	err = userProfilelocator.WaitFor(playwright.LocatorWaitForOptions{
 		Timeout: &timeout,
 	})
 	if err != nil {
