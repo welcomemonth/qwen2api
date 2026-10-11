@@ -1207,7 +1207,7 @@ func (app *App) activateQwenAccount(ctx context.Context, acc *Account) (ok bool,
 
 	if len(pages) < 1 {
 		if _, err = page.Goto("https://chat.qwen.ai", playwright.PageGotoOptions{
-			WaitUntil: playwright.WaitUntilStateNetworkidle,
+			WaitUntil: playwright.WaitUntilStateDomcontentloaded,
 		}); err != nil {
 			acc.LastError = err.Error()
 			return false, fmt.Errorf("打开页面失败：%v", err)
@@ -6511,7 +6511,7 @@ func (q *QwenClient) VerifyAccountWithPwd(ctx context.Context, account *Account)
 
 	// 1. 先打开首页，让 SPA(Single Page Application) 完整初始化
 	if _, err = page.Goto(qwenBaseURL, playwright.PageGotoOptions{
-		WaitUntil: playwright.WaitUntilStateNetworkidle, // 比 Domcontentloaded 更稳
+		WaitUntil: playwright.WaitUntilStateDomcontentloaded, // 比 Domcontentloaded 更稳
 		Timeout:   playwright.Float(60000),
 	}); err != nil {
 		result.Error = fmt.Sprintf("打开首页失败: %v", err)
@@ -8433,7 +8433,7 @@ func (q *QwenClient) StreamChat(ctx context.Context, acc *Account, chatID string
 	})
 	if len(pages) < 1 {
 		if _, err = page.Goto("https://chat.qwen.ai", playwright.PageGotoOptions{
-			WaitUntil: playwright.WaitUntilStateNetworkidle,
+			WaitUntil: playwright.WaitUntilStateDomcontentloaded,
 		}); err != nil {
 			return fmt.Errorf("打开页面失败：%v", err)
 		}

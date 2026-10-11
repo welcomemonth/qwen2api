@@ -59,8 +59,9 @@ func NewBrowserManager(dataDir string, logger *slog.Logger) (*BrowserManager, er
 		return nil, fmt.Errorf("启动 Playwright 失败: %w", err)
 	}
 
-	browser, err := pw.Firefox.Launch(playwright.BrowserTypeLaunchOptions{
+	browser, err := pw.Chromium.Launch(playwright.BrowserTypeLaunchOptions{
 		Headless: playwright.Bool(true),
+		Args:     []string{"--no-sandbox", "--disable-setuid-sandbox"}, // 解决 Docker 内权限问题
 	})
 	if err != nil {
 		pw.Stop() // 连接失败时记得关掉
