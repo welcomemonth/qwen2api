@@ -55,7 +55,7 @@ type App struct {
 	managedAPIKeys map[string]bool
 	envAPIKeys     map[string]bool
 
-	browser           *browser.BrowserManager
+	// browser           *browser.BrowserManager
 	usersStore        *JSONStore
 	accountsStore     *JSONStore
 	capturesStore     *JSONStore
@@ -1141,7 +1141,93 @@ func extractVerifyLinkFromEmailRecord(msg map[string]any) string {
 	return ""
 }
 
-func (app *App) activateQwenAccount(ctx context.Context, acc Account) (Account, bool, error) {
+func (app *App) activateQwenAccount(ctx context.Context, acc *Account) (ok bool, err error) {
+	if app.logger != nil {
+		app.logger.Info("账号激活流程开始", "account", acc.Email)
+	}
+
+	// 1、获取context
+	browserContext, err := app.client.browserManager.NewContextByAccount(acc.Email)
+	if err != nil {
+		acc.LastError = err.Error()
+		return false, err
+	}
+	// 2、获取对应的page
+	var page playwright.Page
+	pages := browserContext.Pages()
+	if len(pages) < 1 {
+		page, err = browserContext.NewPage()
+		if err != nil {
+			acc.LastError = err.Error()
+			return false, err
+		}
+	} else {
+		page = pages[0]
+	}
+
+	// defer page.Close() // 不关闭页面
+	defer func(browserContext playwright.BrowserContext) {
+		// 结束之后 重新保存一下cookie
+		if state, err := browserContext.StorageState(playwright.BrowserContextStorageStateOptions{
+			Path: playwright.String(app.settings.DataDir + utils.GetEmailHashFilename(acc.Email)),
+		}); err != nil {
+			acc.LastError = err.Error()
+			if app.logger != nil {
+				app.logger.Warn("保存账号信息失败", "account", acc.Email)
+			}
+		} else {
+			for _, cookie := range state.Cookies {
+				if cookie.Name == "token" { // 注意：请确认你的 token 字段名是不是叫 "token"，有时可能是 "access_token" 或 "Authorization"
+					acc.Token = cookie.Value
+				}
+			}
+			// 2. 如果 Cookies 中没有，从 LocalStorage (Origins) 中查找
+			for _, origin := range state.Origins {
+				for _, item := range origin.LocalStorage {
+					if item.Name == "token" {
+						acc.Token = item.Value
+					}
+				}
+			}
+			cookies := qwenCookieString(page)
+			acc.Cookies = cookies
+			acc.Valid = true
+			acc.ActivationPending = false
+			acc.StatusCode = "valid"
+			acc.LastError = ""
+			if app.logger != nil {
+				app.logger.Info("账号激活流程成功, 保存成功", "account", acc.Email)
+			}
+		}
+		if app.logger != nil {
+			app.logger.Info("保存账号信息内容", "account.Token", acc.Token)
+		}
+	}(browserContext)
+	// 3、强制刷新然后保存token信息
+
+	if len(pages) < 1 {
+		if _, err = page.Goto("https://chat.qwen.ai", playwright.PageGotoOptions{
+			WaitUntil: playwright.WaitUntilStateNetworkidle,
+		}); err != nil {
+			acc.LastError = err.Error()
+			return false, fmt.Errorf("打开页面失败：%v", err)
+		}
+	}
+
+	// 判断头像是否存在即可
+	userProfilelocator := page.Locator(`img[alt="User profile"]`)
+
+	if err = userProfilelocator.WaitFor(playwright.LocatorWaitForOptions{
+		// Timeout: &timeout, // 不需要传递，默认即30s超时即可
+	}); err != nil {
+		acc.LastError = err.Error()
+		return false, fmt.Errorf("刷新页面失败：%v", err)
+	}
+
+	return true, nil
+}
+
+func (app *App) activateQwenAccountV1(ctx context.Context, acc Account) (Account, bool, error) {
 	browserAutomationMu.Lock()
 	defer browserAutomationMu.Unlock()
 
@@ -2608,7 +2694,7 @@ func (app *App) acquireCompletionChat(ctx context.Context, req StandardRequest, 
 		if reused {
 			return acc, chatID, true, nil
 		}
-		chatID, err = app.client.CreateChat(ctx, acc.Token, req.ResolvedModel, req.ChatType)
+		// chatID, err = app.client.CreateChat(ctx, acc.Token, req.ResolvedModel, req.ChatType) // 取消创建会话
 		if err == nil {
 			return acc, chatID, false, nil
 		}
@@ -6760,7 +6846,7 @@ func (app *App) adminActivateAccount(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
 	defer cancel()
-	updated, ok, err := app.activateQwenAccount(ctx, *target)
+	ok, err := app.activateQwenAccount(ctx, target)
 	if err != nil || !ok {
 		msg := "未能找到激活链接或获取Token"
 		if err != nil {
@@ -6770,12 +6856,12 @@ func (app *App) adminActivateAccount(w http.ResponseWriter, r *http.Request) {
 		utils.WriteJSON(w, http.StatusOK, map[string]any{"ok": false, "error": msg})
 		return
 	}
-	if err := app.accounts.Add(updated); err != nil {
+	if err := app.accounts.Add(*target); err != nil {
 		app.logWarn(r.Context(), "账号激活保存失败", "account", email, "error", err)
 		utils.WriteError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	app.logInfo(r.Context(), "账号激活成功", "account", email)
+	app.logInfo(r.Context(), "账号激活成功", "account", email, "token", target.Token)
 	utils.WriteJSON(w, http.StatusOK, map[string]any{"ok": true, "message": "账号激活成功"})
 }
 
